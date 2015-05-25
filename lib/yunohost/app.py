@@ -34,14 +34,19 @@ import re
 import socket
 import urlparse
 import errno
+from collections import OrderedDict
 
 from moulinette.core import MoulinetteError
+from moulinette.utils.log import getActionLogger
 
 repo_path        = '/var/cache/yunohost/repo'
 apps_path        = '/usr/share/yunohost/apps'
-apps_setting_path= '/etc/yunohost/apps/'
+apps_setting_path= '/etc/yunohost/apps'
 install_tmp      = '/var/cache/yunohost'
 app_tmp_folder   = install_tmp + '/from_file'
+
+logger = getActionLogger('yunohost.app')
+
 
 def app_listlists():
     """
@@ -141,7 +146,7 @@ def app_list(offset=None, limit=None, filter=None, raw=False):
 
     for applist in applists:
         if '.json' in applist:
-            with open(repo_path +'/'+ applist) as json_list:
+            with open('{0}/{1}'.format(repo_path, applist)) as json_list:
                 app_dict.update(json.loads(str(json_list.read())))
 
     for app in os.listdir(apps_setting_path):
@@ -152,7 +157,8 @@ def app_list(offset=None, limit=None, filter=None, raw=False):
                 if original_app in app_dict:
                     app_dict[app] = app_dict[original_app]
                     continue
-            with open( apps_setting_path + app +'/manifest.json') as json_manifest:
+            with open('{0}/{1}/manifest.json'.format(
+                    apps_setting_path, app)) as json_manifest:
                 app_dict[app] = {"manifest":json.loads(str(json_manifest.read()))}
             app_dict[app]['manifest']['orphan']=True
 
@@ -199,27 +205,27 @@ def app_info(app, raw=False):
 
     """
     try:
-        app_info = app_list(filter=app, raw=True)[app]
-    except:
-        app_info = {}
+        # Load info from list first...
+        app = Application.from_app_id(app)
+    except ValueError:
+        logger.info("unable to find application '%s' in lists", app)
+        try:
+            # ... then from installed apps
+            app = Application.from_installed_app(app)
+        except ValueError:
+            logger.exception("neither in installed applications")
+            raise MoulinetteError(errno.EINVAL, m18n.n('app_unknown'))
 
-    if _is_installed(app):
-        with open(apps_setting_path + app +'/settings.yml') as f:
-            app_info['settings'] = yaml.load(f)
-
-        if raw:
-            return app_info
-        else:
-            return {
-                'name': app_info['manifest']['name'],
-                'description': _value_for_locale(app_info['manifest']['description']),
-                # FIXME: Temporarly allow undefined license
-                'license': app_info['manifest'].get('license',
-                    m18n.n('license_undefined')),
-                # FIXME: Temporarly allow undefined version
-                'version' :  app_info['manifest'].get('version', '-'),
-                #TODO: Add more info
-            }
+    if not raw:
+        return app.get_global_info()
+    else:
+        return {
+            'settings': app.settings,
+            'manifest': app.manifest,
+            'installed': app.is_installed,
+            # FIXME: Calls wich need 'lastUpdate' and 'git' are broken!
+            # TODO: Add a remote key with git settings and list name
+        }
 
 
 def app_map(app=None, raw=False, user=None):
@@ -245,7 +251,8 @@ def app_map(app=None, raw=False, user=None):
                 if 'allowed_users' in app_dict['settings'] and user not in app_dict['settings']['allowed_users'].split(','):
                     continue
 
-        with open(apps_setting_path + app_id +'/settings.yml') as f:
+        with open('{0}/{1}/settings.yml'.format(
+                apps_setting_path, app_id)) as f:
             app_settings = yaml.load(f)
 
         if 'domain' not in app_settings:
@@ -328,7 +335,7 @@ def app_upgrade(auth, app=[], url=None, file=None):
             raise MoulinetteError(errno.EPERM,
                                   m18n.n('app_recent_version_required', app_id))
 
-        app_setting_path = apps_setting_path +'/'+ app_id
+        app_setting_path = '{0}/{1}'.format(apps_setting_path, app_id)
 
         if original_app_id != app_id:
             # Replace original_app_id with the forked one in scripts
@@ -445,7 +452,7 @@ def app_install(auth, app, label=None, args=None):
         app_id = app_id_forked
 
     # Prepare App settings
-    app_setting_path = apps_setting_path +'/'+ app_id
+    app_setting_path = '{0}/{1}'.format(apps_setting_path, app_id)
 
     #TMP: Remove old settings
     if os.path.exists(app_setting_path): shutil.rmtree(app_setting_path)
@@ -521,7 +528,7 @@ def app_remove(auth, app):
     if not _is_installed(app):
         raise MoulinetteError(errno.EINVAL, m18n.n('app_not_installed', app))
 
-    app_setting_path = apps_setting_path + app
+    app_setting_path = '{0}/{1}'.format(apps_setting_path, app_id)
 
     #TODO: display fail messages from script
     try:
@@ -565,7 +572,8 @@ def app_addaccess(auth, apps, users=[]):
             raise MoulinetteError(errno.EINVAL,
                                   m18n.n('app_not_installed', app))
 
-        with open(apps_setting_path + app +'/settings.yml') as f:
+        with open('{0}/{1}/settings.yml'.format(
+                apps_setting_path, app_id)) as f:
             app_settings = yaml.load(f)
 
         if 'mode' not in app_settings:
@@ -621,7 +629,8 @@ def app_removeaccess(auth, apps, users=[]):
             raise MoulinetteError(errno.EINVAL,
                                   m18n.n('app_not_installed', app))
 
-        with open(apps_setting_path + app +'/settings.yml') as f:
+        with open('{0}/{1}/settings.yml'.format(
+                apps_setting_path, app_id)) as f:
             app_settings = yaml.load(f)
 
         if 'skipped_uris' not in app_settings or app_settings['skipped_uris'] != '/':
@@ -667,7 +676,8 @@ def app_clearaccess(auth, apps):
             raise MoulinetteError(errno.EINVAL,
                                   m18n.n('app_not_installed', app))
 
-        with open(apps_setting_path + app +'/settings.yml') as f:
+        with open('{0}/{1}/settings.yml'.format(
+                apps_setting_path, app_id)) as f:
             app_settings = yaml.load(f)
 
         if 'mode' in app_settings:
@@ -695,7 +705,7 @@ def app_makedefault(auth, app, domain=None):
     if not _is_installed(app):
         raise MoulinetteError(errno.EINVAL, m18n.n('app_not_installed', app))
 
-    with open(apps_setting_path + app +'/settings.yml') as f:
+    with open('{0}/{1}/settings.yml'.format(apps_setting_path, app_id)) as f:
         app_settings = yaml.load(f)
 
     app_domain = app_settings['domain']
@@ -740,7 +750,7 @@ def app_setting(app, key, value=None, delete=False):
         delete -- Delete the key
 
     """
-    settings_file = apps_setting_path + app +'/settings.yml'
+    settings_file = '{0}/{1}/settings.yml'.format(apps_setting_path, app_id)
 
     try:
         with open(settings_file) as f:
@@ -812,7 +822,7 @@ def app_checkurl(auth, url, app=None):
     path = url[url.index('/'):]
 
     if path[-1:] != '/':
-        path = path + '/'
+        path += '/'
 
     apps_map = app_map(raw=True)
 
@@ -904,7 +914,8 @@ def app_ssowatconf(auth):
 
     for app in apps_list:
         if _is_installed(app['id']):
-            with open(apps_setting_path + app['id'] +'/settings.yml') as f:
+            with open('{0}/{1}/settings.yml'.format(
+                    apps_setting_path, app['id'])) as f:
                 app_settings = yaml.load(f)
                 for item in _get_setting(app_settings, 'skipped_uris'):
                     if item[-1:] == '/':
@@ -959,6 +970,293 @@ def app_ssowatconf(auth):
     msignals.display(m18n.n('ssowat_conf_generated'), 'success')
 
 
+# Private classes and methods ------------------------------------------
+
+class Application(object):
+    """Application representation
+ 
+    Provide access to an application information - given by its manifest - and
+    settings if it's installed. It can be retrieved and instantiated by
+    different constructors which will take care of initialize the object.
+
+    Keyword arguments:
+        - manifest -- A dict containing the app manifest
+        - app_id -- The application id
+        - remote -- Remote settings of the app
+        - undefined_value -- The value to use for undefined properties
+
+    """
+    def __init__(self, manifest, app_id=None, remote=None,
+            undefined_value='-'):
+        self._manifest = manifest
+        self._id = app_id if app_id else self.get_manifest_key(
+            'id', required=True)
+        if remote and isinstance(remote, dict):
+            self._remote = remote
+        self.undefined_value = undefined_value
+
+    @classmethod
+    def from_manifest_file(cls, path, **kwargs):
+        """Construct the application from its JSON manifest file"""
+        if 'manifest' in kwargs:
+            raise ValueError('manifest argument not allowed, \
+                it will be overridden.')
+        with open(path, 'r') as f:
+            manifest = json.load(f, 'utf-8')
+        return cls(manifest, **kwargs)
+
+    @classmethod
+    def from_app_id(cls, app_id):
+        """Retrieve and construct the application from its id"""
+        data = (_get_lists_content(concatenate=True)).get(app_id)
+        if data is None:
+            raise ValueError("application id not found in lists")
+        return cls(data['manifest'], app_id=app_id, remote=data.get('git'))
+
+    @classmethod
+    def from_installed_app(cls, app_id):
+        """Retrieve and construct the application from an installed one"""
+        try:
+            return cls.from_manifest_file(
+                '{0}/{1}/manifest.json'.format(apps_setting_path, app_id),
+                app_id=app_id)
+        except IOError:
+            raise ValueError("application id not found in installed ones")
+
+    @classmethod
+    def all_in_list(cls, list_name):
+        """Retrieve and construct applications for each entry in a list"""
+        ret = {}
+        apps = _get_lists_content([list_name], concatenate=True)
+        for i, d in apps.items():
+            ret[i] = cls(d['manifest'], app_id=i, remote=d.get('git'))
+        return ret
+
+
+    ## Manifest properties
+
+    GLOBAL_INFO_PROPERTIES = [
+        'name', 'description', 'url', 'version', 'categories',
+    ]
+
+    @property
+    def id(self):
+        """The unique application identifier"""
+        return self._id
+
+    @property
+    def name(self):
+        """The application name"""
+        try:
+            return self._name
+        except AttributeError:
+            self._name = self.get_manifest_key(
+                'name', required=True)
+            return self._name
+
+    @property
+    def description(self):
+        """The application description in current locale"""
+        try:
+            return _value_for_locale(self._description)
+        except AttributeError:
+            self._description = self.get_manifest_key(
+                'description', required=True)
+            return self.description
+
+    @property
+    def version(self):
+        """The upstream application version (optional)"""
+        try:
+            return self._version
+        except AttributeError:
+            self._version = self.get_manifest_key(
+                'version', self.undefined_value)
+            return self._version
+
+    @property
+    def url(self):
+        """The upstream application URL (optional)"""
+        try:
+            return self._url
+        except AttributeError:
+            self._url = self.get_manifest_key(
+                'url', self.undefined_value)
+            return self._url
+
+    @property
+    def maintainer(self):
+        """A dict with the application maintainer information"""
+        try:
+            return self._maintainer
+        except AttributeError:
+            info = self.get_manifest_key(
+                'maintainer', required=True, deprecated=['developer'])
+            self._maintainer = {
+                'name': info.get('name', self.undefined_value),
+                'email': info.get('email', self.undefined_value),
+            }
+            return self._maintainer
+
+    @property
+    def categories(self):
+        """A list of categories that define the application (optional)"""
+        try:
+            return self._categories
+        except AttributeError:
+            self._categories = self.get_manifest_key(
+                'categories', [])
+            return self._categories
+
+    @property
+    def multi_instance(self):
+        """Either the application can be installed multiple times or not"""
+        try:
+            return self._multi_instance
+        except AttributeError:
+            self._multi_instance = self.get_manifest_key(
+                'multi_instance', False)
+            return self._multi_instance
+
+    @property
+    def arguments(self):
+        """A dict of arguments that the application need for the scripts"""
+        try:
+            return self._arguments
+        except AttributeError:
+            self._arguments = self.get_manifest_key(
+                'arguments', {})
+            return self._arguments
+
+
+    ## Accessibility methods and properties
+
+    @property
+    def manifest(self):
+        """Return the raw manifest"""
+        return self._manifest
+
+    @property
+    def is_installed(self):
+        """Either the application is installed or not"""
+        if os.path.isdir('{0}/{1}'.format(apps_setting_path, self.id)):
+            return True
+        return False
+
+    @property
+    def settings(self):
+        """Return the application settings if it's installed"""
+        try:
+            with open('{0}/{1}/settings.yml'.format(
+                    apps_setting_path, self.id)) as f:
+                return yaml.load(f)
+        except:
+            return {}
+
+    def __repr__(self):
+        """Representation of an application"""
+        if self.multi_instance:
+            return "<Application {0} - {1}>".format(self.name, self.id)
+        else:
+            return "<Application {0}>".format(self.name)
+
+    def get_manifest_key(self, key, default=None, required=False,
+            deprecated=[]):
+        """Get a key value from the manifest
+
+        Attempt to retrieve the value for 'key' from the manifest. The first
+        founded value for keys in 'deprecated' will be returned if 'key' is
+        not found.
+        If default is not given and required is False, it defaults to None.
+        Otherwise, a KeyError will be raised if key is not found.
+
+        Keyword arguments:
+            - key -- The key to get
+            - default -- The default value to return if key is not found
+            - required -- True to raise an exception if key is not found
+            - deprecated -- A list of deprecated keys
+
+        """
+        try:
+            return self._manifest[key]
+        except KeyError:
+            pass
+        for k in deprecated:
+            try:
+                value = self._manifest[k]
+            except KeyError:
+                continue
+            else:
+                logger.warning("manifest's key '%s' is deprecated, " \
+                    "please use '%s' instead", k, key)
+                return value
+        if default is None and required:
+            raise KeyError("requied key '%s' is undefined" % key)
+        return default
+
+    def get_global_info(self, exclude=[], exclude_undefined=False):
+        """Get global application informations
+
+        Return global application informations as a dict. Properties in the
+        'exclude' list will be skipped. If exclude_undefined is True,
+        undefined keys will not be returned too.
+
+        Keyword arguments:
+            - exclude -- A collection of keys to exclude
+            - exclude_undefined -- True to skip undefined keys
+
+        """
+        ret = OrderedDict()
+
+        # Retrieve keys to return
+        if exclude:
+            exclude = set(exclude)
+            keys = [k for k in self.GLOBAL_INFO_PROPERTIES if k not in exclude]
+        else:
+            keys = self.GLOBAL_INFO_PROPERTIES
+
+        # Construct the returned dict
+        if exclude_undefined:
+            undefined_value = self.undefined_value
+            self.undefined_value = None
+            for k in keys:
+                v = getattr(self, k)
+                if v is not None:
+                    ret[k] = v
+            self.undefined_value = undefined_value
+        else:
+            ret = OrderedDict((k, getattr(self, k)) for k in keys)
+        return ret
+
+
+def _get_lists_content(lists=[], concatenate=False):
+    """Retrieve the content of applications lists
+
+    Keyword arguments:
+        - lists -- A list of lists to retrieve (all by default)
+        - concatenate -- True to concatenate the content of each list
+
+    """
+    # TODO: Provide this method into an action
+    ret = {}
+    if not lists:
+        lists = app_listlists()['lists']
+    if concatenate:
+        _add = lambda l,c: ret.update(c)
+    else:
+        _add = lambda l,c: ret.update({l:c})
+
+    for l in lists:
+        try:
+            with open('{0}/{1}.json'.format(repo_path, l)) as f:
+                content = json.load(f, 'utf-8')
+        except IOError:
+            logger.warning("unknown list '%s'", l)
+        else:
+            _add(l, content)
+    return ret
+
+
 def _extract_app_from_file(path, remove=False):
     """
     Unzip or untar application tarball in app_tmp_folder, or copy it from a directory
@@ -987,7 +1285,7 @@ def _extract_app_from_file(path, remove=False):
     elif (path[:1] == '/' and os.path.exists(path)) or (os.system('cd %s/%s' % (os.getcwd(), path)) == 0):
         shutil.rmtree(app_tmp_folder)
         if path[len(path)-1:] != '/':
-            path = path + '/'
+            path += '/'
         extract_result = os.system('cd %s && cp -a "%s" %s' % (os.getcwd(), path, app_tmp_folder))
     else:
         extract_result = 1
