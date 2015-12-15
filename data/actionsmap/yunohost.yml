@@ -243,40 +243,52 @@ domain:
                 authenticate: all
                 authenticator: ldap-anonymous
             arguments:
-                -r:
-                    full: --raw
-                    help: Return domains as a bash-usable list instead of JSON
-                    action: store_true
-                -f:
-                    full: --filter
-                    help: LDAP filter used to search
+                -s:
+                    full: --used-for
+                    help: Filter domains used only for those services
+                    nargs: "*"
+                    metavar: SERVICES
                 -l:
                     full: --limit
                     help: Maximum number of domain fetched
                     type: int
-                -o:
-                    full: --offset
-                    help: Starting number for domain fetching
-                    type: int
+
+        ### domain_info()
+        info:
+            action_help: Get information about a domain
+            api: GET /domains/<domain>
+            configuration:
+                authenticate: all
+                authenticator: ldap-anonymous
+            arguments:
+                domain:
+                    help: Domain to get info about
+                    extra:
+                        pattern: &pattern_domain
+                            - !!str ^([^\W_A-Z]+([-]*[^\W_A-Z]+)*\.)+([^\W\d_]{2,})$
+                            - "pattern_domain"
 
         ### domain_add()
         add:
-            action_help: Create a custom domain
+            action_help: Add a domain
             api: POST /domains
             configuration:
                 lock: false
                 authenticate: all
             arguments:
                 domain:
-                    help: Domain name to add
+                    help: Domain to add
                     extra:
-                        pattern: &pattern_domain
-                            - !!str ^([^\W_A-Z]+([-]*[^\W_A-Z]+)*\.)+([^\W\d_]{2,})$
-                            - "pattern_domain"
+                        pattern: *pattern_domain
                 -d:
                     full: --dyndns
                     help: Subscribe to the DynDNS service
                     action: store_true
+                -s:
+                    full: --use-for
+                    help: Services to use domain for (all by default)
+                    nargs: "*"
+                    metavar: SERVICES
 
         ### domain_remove()
         remove:
@@ -290,18 +302,15 @@ domain:
                     help: Domain to delete
                     extra:
                         pattern: *pattern_domain
-
-        ### domain_info()
-#        info:
-#            action_help: Get domain informations
-#            api: GET /domains/<domain>
-#            arguments:
-#                domain:
-#                    help: ""
-#                    extra:
-#                        pattern:
-#                            - '^([a-zA-Z0-9]{1}([a-zA-Z0-9\-]*[a-zA-Z0-9])*)(\.[a-zA-Z0-9]{1}([a-zA-Z0-9\-]*[a-zA-Z0-9])*)*(\.[a-zA-Z]{1}([a-zA-Z0-9\-]*[a-zA-Z0-9])*)$'
-#                            - "Must be a valid domain name (e.g. my-domain.org)"
+                -f:
+                    full: --force
+                    help: Force the domain removal
+                    action: store_true
+                -s:
+                    full: --used-for
+                    help: Remove domain only for those services
+                    nargs: "*"
+                    metavar: SERVICES
 
 
 #############################
