@@ -82,7 +82,7 @@ def app_listlists():
 
 def app_fetchlist(url=None, name=None):
     """
-    Fetch application list from app server
+    Fetch application list(s) from app server
 
     Keyword argument:
         name -- Name of the list (default yunohost)
@@ -93,23 +93,58 @@ def app_fetchlist(url=None, name=None):
     if not os.path.exists(repo_path):
         os.makedirs(repo_path)
 
-    if url is None:
-        url = 'https://app.yunohost.org/official.json'
-        name = 'yunohost'
-    elif name is None:
+    if url is not None and name:
+        app_lists = [(url, name)]
+    elif url is not None and name is None:
         raise MoulinetteError(errno.EINVAL,
                               m18n.n('custom_appslist_name_required'))
+    else:
+        app_lists = []
+        for filename in [x for x in os.listdir(repo_path) if x.endswith(".json")]:
+            base_filename = filename[:-len(".json")]
+            url_filename_path = os.path.join(repo_path, base_filename + ".url")
 
-    try:
-        urlretrieve(url, '%s/%s.json' % (repo_path, name))
-    except Exception as e:
-        # I don't know how to put e into the MoulinetteError stuff
-        print e
-        raise MoulinetteError(errno.EBADR, m18n.n('appslist_retrieve_error'))
+            if os.path.exists(url_filename_path):
+                url = open(url_filename_path, "r").read().strip()
+            else:  # XXX backward compatible code, YunoHost never store the url of the list else where
+                cron_file_path = "/etc/cron.d/yunohost-applist-%s" % name
 
-    open("/etc/cron.d/yunohost-applist-%s" % name, "w").write('00 00 * * * root yunohost app fetchlist -u %s -n %s > /dev/null 2>&1\n' % (url, name))
+                if not os.path.exists(cron_file_path):
+                    logger.warning("neither %s nor %s exist, is the app list '%s' correctly installed on the system?" %\
+                                                                       (url_filename_path, cron_file_path, base_filename))
+                    continue
 
-    logger.success(m18n.n('appslist_fetched'))
+                cron_file_content = open(cron_file_path).read().strip()
+
+                maybe_url = re.search("-u (https?://[^ ]+)", cron_file_content)
+
+                if maybe_url.groups():
+                    url = maybe_url.groups()[0]
+                    open(url_filename_path, "w").write(url)
+                else:
+                    logger.warning("I could not retreive the url for the app list '%(app_list)s' in the file '%(cron_file_path)s'."
+                                    "Please create a file '%(url_filename_path)s' that contains the url for this applist." % {
+                        "app_list": base_filename,
+                        "cron_file_path": cron_file_path,
+                        "url_filename_path": url_filename_path
+                    })
+
+                    continue
+
+            app_lists.append((url, base_filename))
+
+    for url, name in app_lists:
+        try:
+            urlretrieve(url, '%s/%s.json' % (repo_path, name))
+        except Exception as e:
+            # I don't know how to put e into the MoulinetteError stuff
+            print e
+            raise MoulinetteError(errno.EBADR, m18n.n('appslist_retrieve_error'))
+
+        open("/etc/cron.d/yunohost-applist-%s" % name, "w").write('00 00 * * * root yunohost app fetchlist -u %s -n %s > /dev/null 2>&1\n' % (url, name))
+
+        # TODO display app list name
+        logger.success(m18n.n('appslist_fetched'))
 
 
 def app_removelist(name):
