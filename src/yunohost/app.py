@@ -334,6 +334,7 @@ def app_upgrade(auth, app=[], url=None, file=None):
 
     """
     from yunohost.hook import hook_add, hook_remove, hook_exec
+    from yunohost.journals import Journal
 
     try:
         app_list()
@@ -401,7 +402,8 @@ def app_upgrade(auth, app=[], url=None, file=None):
 
         # Execute App upgrade script
         os.system('chown -hR admin: %s' % install_tmp)
-        if hook_exec(app_tmp_folder +'/scripts/upgrade', args=args_list, env=env_dict) != 0:
+        journal = Journal(["upgrade", app_instance_name], "app", args=args_list, env=env_dict)
+        if hook_exec(app_tmp_folder +'/scripts/upgrade', args=args_list, env=env_dict, journa=journal) != 0:
             logger.error(m18n.n('app_upgrade_failed', app=app_instance_name))
         else:
             now = int(time.time())
