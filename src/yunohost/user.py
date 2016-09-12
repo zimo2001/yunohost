@@ -140,10 +140,7 @@ def user_create(auth, username, firstname, lastname, mail, password,
     # Adapt values for LDAP
     fullname = '%s %s' % (firstname, lastname)
     rdn = 'uid=%s,ou=users' % username
-    char_set = string.ascii_uppercase + string.digits
-    salt = ''.join(random.sample(char_set,8))
-    salt = '$1$' + salt + '$'
-    user_pwd = '{CRYPT}' + crypt.crypt(str(password), salt)
+    user_pwd = _hashPassword(password)
     attr_dict = {
         'objectClass'   : ['mailAccount', 'inetOrgPerson', 'posixAccount'],
         'givenName'     : firstname,
@@ -291,10 +288,7 @@ def user_update(auth, username, firstname=None, lastname=None, mail=None,
         new_attr_dict['cn'] = new_attr_dict['displayName'] = firstname + ' ' + lastname
 
     if change_password:
-        char_set = string.ascii_uppercase + string.digits
-        salt = ''.join(random.sample(char_set,8))
-        salt = '$1$' + salt + '$'
-        new_attr_dict['userPassword'] = '{CRYPT}' + crypt.crypt(str(change_password), salt)
+        new_attr_dict['userPassword'] = _hashPassword(change_password)
 
     if mail:
         auth.validate_uniqueness({ 'mail': mail })
@@ -398,12 +392,12 @@ def user_info(auth, username):
         result_dict['mail-forward'] = user['maildrop'][1:]
 
     if 'mailuserquota' in user:
-        if user['mailuserquota'][0] != '0': 
+        if user['mailuserquota'][0] != '0':
            cmd = 'doveadm -f flow quota get -u %s' % user['uid'][0]
            userquota = subprocess.check_output(cmd,stderr=subprocess.STDOUT,
                                              shell=True)
            quotavalue = re.findall(r'\d+', userquota)
-           result = '%s (%s%s)' % ( _convertSize(eval(quotavalue[0])), 
+           result = '%s (%s%s)' % ( _convertSize(eval(quotavalue[0])),
                                              quotavalue[2], '%')
            result_dict['mailbox-quota'] = {
                'limit' : user['mailuserquota'][0],
@@ -411,7 +405,7 @@ def user_info(auth, username):
            }
         else:
            result_dict['mailbox-quota'] = m18n.n('unlimit')
- 
+
     if result:
         return result_dict
     else:
@@ -423,3 +417,16 @@ def _convertSize(num, suffix=''):
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
+
+def _hashPassword(password):
+    """
+    Abstract hash password function
+
+    Keyword argument:
+        password -- Password without salt
+
+    """
+    char_set = string.ascii_uppercase + string.digits
+    salt = ''.join(random.sample(char_set,12))
+    salt = '$6$' + salt + '$'
+    return '{CRYPT}' + crypt.crypt(str(password), salt)
