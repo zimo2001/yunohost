@@ -1,0 +1,50 @@
+#!/bin/bash
+
+set -e
+
+do_pre_regen() {
+  pending_dir=$1
+
+  cd /usr/share/yunohost/templates/rspamd
+
+  install -D -m 644 metrics.local.conf \
+      "${pending_dir}/etc/rspamd/local.d/metrics.conf"
+  install -D -m 644 rspamd.sieve \
+      "${pending_dir}/etc/dovecot/global_script/rspamd.sieve"
+}
+
+do_post_regen() {
+  regen_conf_files=$1
+
+  [ -z "$regen_conf_files" ] && exit 0
+
+  # compile sieve script
+  [[ "$regen_conf_files" =~ rspamd\.sieve ]] && {
+    sudo sievec /etc/dovecot/global_script/rspamd.sieve
+    sudo chown -R vmail:mail /etc/dovecot/global_script
+    sudo systemctl restart dovecot
+  }
+
+  # ensure that the socket is listening and stop the service - it will be
+  # started again by the socket as needed
+  sudo systemctl -q start rspamd.socket
+  sudo systemctl -q stop rspamd.service 2>&1 || true
+}
+
+FORCE=${2:-0}
+DRY_RUN=${3:-0}
+
+case "$1" in
+  pre)
+    do_pre_regen $4
+    ;;
+  post)
+    do_post_regen $4
+    ;;
+  *)
+    echo "hook called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

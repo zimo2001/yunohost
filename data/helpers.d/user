@@ -1,0 +1,40 @@
+# Check if a YunoHost user exists
+#
+# example: ynh_user_exists 'toto' || exit 1
+#
+# usage: ynh_user_exists username
+# | arg: username - the username to check
+ynh_user_exists() {
+    sudo yunohost user list --output-as json | grep -q "\"username\": \"${1}\""
+}
+
+# Retrieve a YunoHost user information
+#
+# example: mail=$(ynh_user_get_info 'toto' 'mail')
+#
+# usage: ynh_user_get_info username key
+# | arg: username - the username to retrieve info from
+# | arg: key - the key to retrieve
+# | ret: string - the key's value
+ynh_user_get_info() {
+    sudo yunohost user info "$1" --output-as plain | ynh_get_plain_key "$2"
+}
+
+# Get the list of YunoHost users
+#
+# example: for u in $(ynh_user_list); do ...
+#
+# usage: ynh_user_list
+# | ret: string - one username per line
+ynh_user_list() {
+    sudo yunohost user list --output-as plain --quiet \
+      | awk '/^##username$/{getline; print}'
+}
+
+# Check if a user exists on the system
+#
+# usage: ynh_system_user_exists username
+# | arg: username - the username to check
+ynh_system_user_exists() {
+    getent passwd "$1" &>/dev/null
+}

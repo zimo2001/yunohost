@@ -5,11 +5,11 @@
 *.egg-info
 *.swp
 *.swo
+*~
 dist
 build
 eggs
 parts
-bin
 cache
 var
 sdist
@@ -29,3 +29,6 @@ pip-log.txt
 
 # Mr Developer
 .mr.developer.cfg
+
+# moulinette lib
+src/yunohost/locales

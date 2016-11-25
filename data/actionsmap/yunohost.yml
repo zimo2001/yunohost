@@ -54,9 +54,11 @@ _global:
     arguments:
         -v:
             full: --version
-            help: Display moulinette version
-            action: version
-            version: moulinette %version%
+            help: Display YunoHost packages versions
+            action: callback
+            callback:
+                method: yunohost.utils.packages.ynh_packages_version
+                return: true
 
 #############################
 #           User            #
@@ -135,6 +137,15 @@ user:
                         pattern: &pattern_password
                             - !!str ^.{3,}$
                             - "pattern_password"
+                -q:
+                    full: --mailbox-quota
+                    help: Mailbox size quota
+                    default: "0"
+                    metavar: "{SIZE|0}"
+                    extra:
+                        pattern: &pattern_mailbox_quota
+                            - !!str ^(\d+[bkMGT])|0$
+                            - "pattern_mailbox_quota"
 
         ### user_delete()
         delete:
@@ -197,6 +208,12 @@ user:
                     help: Mail aliases to remove
                     nargs: "*"
                     metavar: MAIL
+                -q:
+                    full: --mailbox-quota
+                    help: Mailbox size quota
+                    metavar: "{SIZE|0}"
+                    extra:
+                        pattern: *pattern_mailbox_quota
 
         ### user_info()
         info:
@@ -242,6 +259,7 @@ domain:
             action_help: Create a custom domain
             api: POST /domains
             configuration:
+                lock: false
                 authenticate: all
             arguments:
                 domain:
@@ -260,12 +278,33 @@ domain:
             action_help: Delete domains
             api: DELETE /domains/<domain>
             configuration:
+                lock: false
                 authenticate: all
             arguments:
                 domain:
                     help: Domain to delete
                     extra:
                         pattern: *pattern_domain
+
+        ### domain_dns_conf()
+        dns-conf:
+            action_help: Generate DNS configuration for a domain
+            api: GET /domains/<domain>/dns
+            configuration:
+                lock: false
+                authenticate:
+                    - api
+            arguments:
+                domain:
+                    help: Target domain
+                -t:
+                    full: --ttl
+                    help: Time To Live (TTL) in second before DNS servers update. Default is 3600 seconds (i.e. 1 hour).
+                    extra:
+                        pattern:
+                            - !!str ^[0-9]+$
+                            - "pattern_positive_number"
+
 
         ### domain_info()
 #        info:
@@ -294,10 +333,10 @@ app:
             arguments:
                 -u:
                     full: --url
-                    help: URL of remote JSON list (default http://fapp.yunohost.org/app/list/raw)
+                    help: URL of remote JSON list (default https://app.yunohost.org/official.json)
                 -n:
                     full: --name
-                    help: Name of the list (default fapp)
+                    help: Name of the list (default yunohost)
                     extra:
                         pattern: &pattern_listname
                             - !!str ^[a-z0-9_]+$
@@ -337,14 +376,26 @@ app:
                     full: --raw
                     help: Return the full app_dict
                     action: store_true
+                -i:
+                    full: --installed
+                    help: Return only installed apps
+                    action: store_true
+                -b:
+                    full: --with-backup
+                    help: Return only apps with backup feature (force --installed filter)
+                    action: store_true
 
         ### app_info()
         info:
-            action_help: Get app info
+            action_help: Get information about an installed app
             api: GET /apps/<app>
             arguments:
                 app:
                     help: Specific app ID
+                -s:
+                    full: --show-status
+                    help: Show app installation status
+                    action: store_true
                 -r:
                     full: --raw
                     help: Return the full app_dict
@@ -384,7 +435,7 @@ app:
                     help: Custom name for the app
                 -a:
                     full: --args
-                    help: Serialize arguments for app installation
+                    help: Serialized arguments for app script (i.e. "domain=domain.tld&path=/path")
 
         ### app_remove() TODO: Write help
         remove:
@@ -419,7 +470,7 @@ app:
 
         ### app_setting()
         setting:
-            action_help: Set ou get an app setting value
+            action_help: Set or get an app setting value
             api: GET /apps/<app>/settings
             arguments:
                 app:
@@ -464,6 +515,7 @@ app:
         initdb:
             action_help: Create database and initialize it with optionnal attached script
             api: POST /tools/initdb
+            deprecated: true
             arguments:
                 user:
                     help: Name of the DB user
@@ -476,6 +528,14 @@ app:
                 -s:
                     full: --sql
                     help: Initial SQL file
+
+        ### app_debug()
+        debug:
+            action_help: Display all debug informations for an application
+            api: GET /apps/<app>/debug
+            arguments:
+                app:
+                    help: App name
 
         ### app_makedefault()
         makedefault:
@@ -511,7 +571,7 @@ app:
                     nargs: "+"
                 -u:
                     full: --users
-                    nargs: "+"
+                    nargs: "*"
 
         ### app_removeaccess() TODO: Write help
         removeaccess:
@@ -525,7 +585,7 @@ app:
                     nargs: "+"
                 -u:
                     full: --users
-                    nargs: "+"
+                    nargs: "*"
 
         ### app_clearaccess()
         clearaccess:
@@ -572,6 +632,12 @@ backup:
                 --hooks:
                     help: List of backup hooks names to execute
                     nargs: "*"
+                --ignore-hooks:
+                    help: Do not execute backup hooks
+                    action: store_true
+                --apps:
+                    help: List of application names to backup
+                    nargs: "*"
                 --ignore-apps:
                     help: Do not backup apps
                     action: store_true
@@ -579,17 +645,25 @@ backup:
         ### backup_restore()
         restore:
             action_help: Restore from a local backup archive
-            api: POST /restore
+            api: POST /backup/restore/<name>
             configuration:
-                authenticate: false
+                authenticate: all
+                authenticator: ldap-anonymous
+                lock: false
             arguments:
                 name:
                     help: Name of the local backup archive
                 --hooks:
                     help: List of restauration hooks names to execute
                     nargs: "*"
+                --apps:
+                    help: List of application names to restore
+                    nargs: "*"
                 --ignore-apps:
                     help: Do not restore apps
+                    action: store_true
+                --ignore-hooks:
+                    help: Do not restore hooks
                     action: store_true
                 --force:
                     help: Force restauration on an already installed system
@@ -601,6 +675,15 @@ backup:
             api: GET /backup/archives
             configuration:
                 lock: false
+            arguments:
+                -i:
+                    full: --with-info
+                    help: Show backup information for each archive
+                    action: store_true
+                -H:
+                    full: --human-readable
+                    help: Print sizes in human readable format
+                    action: store_true
 
         ### backup_info()
         info:
@@ -611,6 +694,26 @@ backup:
             arguments:
                 name:
                     help: Name of the local backup archive
+                -d:
+                    full: --with-details
+                    help: Show additional backup information
+                    action: store_true
+                -H:
+                    full: --human-readable
+                    help: Print sizes in human readable format
+                    action: store_true
+
+        ### backup_delete()
+        delete:
+            action_help: Delete a backup archive
+            api: DELETE /backup/archives/<name>
+            configuration:
+                lock: false
+            arguments:
+                name:
+                    help: Name of the archive to delete
+                    extra:
+                        pattern: *pattern_backup_archive_name
 
 
 #############################
@@ -662,6 +765,12 @@ monitor:
                     help: Show network informations
                     action: append_const
                     const: infos
+                    dest: units
+                -c:
+                    full: --check
+                    help: Check network configuration
+                    action: append_const
+                    const: check
                     dest: units
                 -H:
                     full: --human-readable
@@ -737,9 +846,9 @@ monitor:
             action_help: Enable server monitoring
             api: PUT /monitor
             arguments:
-                -n:
-                    full: --no-stats
-                    help: Disable monitoring statistics
+                -s:
+                    full: --with-stats
+                    help: Enable monitoring statistics
                     action: store_true
 
         ### monitor_disable()
@@ -847,6 +956,37 @@ service:
                     default: 50
                     type: int
 
+        ### service_regen_conf()
+        regen-conf:
+            action_help: Regenerate the configuration file(s) for a service
+            api: PUT /services/regenconf
+            configuration:
+                lock: false
+            deprecated_alias:
+                - regenconf
+            arguments:
+                names:
+                    help: Services name to regenerate configuration of
+                    nargs: "*"
+                    metavar: NAME
+                -d:
+                    full: --with-diff
+                    help: Show differences in case of configuration changes
+                    action: store_true
+                -f:
+                    full: --force
+                    help: >
+                        Override all manual modifications in configuration
+                        files
+                    action: store_true
+                -n:
+                    full: --dry-run
+                    help: Show what would have been regenerated
+                    action: store_true
+                -p:
+                    full: --list-pending
+                    help: List pending configuration files and exit
+                    action: store_true
 
 #############################
 #         Firewall          #
@@ -877,26 +1017,29 @@ firewall:
         reload:
             action_help: Reload all firewall rules
             api: PUT /firewall
+            arguments:
+                --skip-upnp:
+                    help: Do not refresh port forwarding using UPnP
+                    action: store_true
 
         ### firewall_allow()
         allow:
             action_help: Allow connections on a port
             api: POST /firewall/port
             arguments:
+                protocol:
+                    help: "Protocol type to allow (TCP/UDP/Both)"
+                    choices:
+                        - TCP
+                        - UDP
+                        - Both
+                    default: TCP
                 port:
                     help: Port or range of ports to open
                     extra:
                         pattern: &pattern_port_or_range
                             - !!str ((^|(?!\A):)([0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])){1,2}?$
                             - "pattern_port_or_range"
-                -p:
-                    full: --protocol
-                    help: "Protocol type to allow (default: TCP)"
-                    choices:
-                        - TCP
-                        - UDP
-                        - Both
-                    default: TCP
                 -4:
                     full: --ipv4-only
                     help: Only add a rule for IPv4 connections
@@ -918,18 +1061,17 @@ firewall:
             action_help: Disallow connections on a port
             api: DELETE /firewall/port
             arguments:
-                port:
-                    help: Port or range of ports to close
-                    extra:
-                        pattern: *pattern_port_or_range
-                -p:
-                    full: --protocol
-                    help: "Protocol type to allow (default: TCP)"
+                protocol:
+                    help: "Protocol type to allow (TCP/UDP/Both)"
                     choices:
                         - TCP
                         - UDP
                         - Both
                     default: TCP
+                port:
+                    help: Port or range of ports to close
+                    extra:
+                        pattern: *pattern_port_or_range
                 -4:
                     full: --ipv4-only
                     help: Only remove the rule for IPv4 connections
@@ -1001,18 +1143,21 @@ dyndns:
             arguments:
                 --dyn-host:
                     help: Dynette DNS server to inform
-                    default: "dynhost.yunohost.org"
+                    default: "dyndns.yunohost.org"
                 -d:
                     full: --domain
-                    help: Full domain to subscribe with
+                    help: Full domain to update
                     extra:
                         pattern: *pattern_domain
                 -k:
                     full: --key
                     help: Public DNS key
                 -i:
-                    full: --ip
+                    full: --ipv4
                     help: IP address to send
+                -6:
+                    full: --ipv6
+                    help: IPv6 address to send
 
         ### dyndns_installcron()
         installcron:
@@ -1056,9 +1201,12 @@ tools:
         ### tools_maindomain()
         maindomain:
             action_help: Main domain change tool
-            api: PUT /domains/main
+            api:
+                - GET /domains/main
+                - PUT /domains/main
             configuration:
                 authenticate: all
+                lock: false
             arguments:
                 -o:
                     full: --old-domain
@@ -1125,6 +1273,20 @@ tools:
                     help: Ignore APT packages upgrade
                     action: store_true
 
+        ### tools_diagnosis()
+        diagnosis:
+            action_help: YunoHost diagnosis
+            api: GET /diagnosis
+            configuration:
+                authenticate: all
+                authenticator: ldap-anonymous
+                lock: false
+            arguments:
+                -p:
+                    full: --private
+                    help: Show private data (domain, IP)
+                    action: store_true
+
 
 #############################
 #           Hook            #
@@ -1136,7 +1298,6 @@ hook:
         ### hook_add()
         add:
             action_help: Store hook script to filesystem
-            api: PUT /hook
             arguments:
                 app:
                     help: App to link with
@@ -1146,10 +1307,19 @@ hook:
         ### hook_remove()
         remove:
             action_help: Remove hook scripts from filesystem
-            api: DELETE /hook
             arguments:
                 app:
                     help: Scripts related to app will be removed
+
+        ### hook_info()
+        info:
+            action_help: Get information about a given hook
+            api: GET /hooks/<action>/<name>
+            arguments:
+                action:
+                    help: Action name
+                name:
+                    help: Hook name
 
         ### hook_list()
         list:
@@ -1174,7 +1344,7 @@ hook:
         ### hook_callback()
         callback:
             action_help: Execute all scripts binded to an action
-            api: GET /hooks
+            api: POST /hooks/<action>
             arguments:
                 action:
                     help: Action name
@@ -1184,24 +1354,33 @@ hook:
                     nargs: "*"
                 -a:
                     full: --args
-                    help: Ordered list of arguments to pass to the script
+                    help: Ordered list of arguments to pass to the scripts
                     nargs: "*"
-
-        ### hook_check()
-        check:
-            action_help: Parse the script file and get arguments
-            api: GET /hook/check
-            arguments:
-                file:
-                    help: File to check
+                -q:
+                    full: --no-trace
+                    help: Do not print each command that will be executed
+                    action: store_true
+                -d:
+                    full: --chdir
+                    help: The directory from where the scripts will be executed
 
         ### hook_exec()
         exec:
             action_help: Execute hook from a file with arguments
-            api: GET /hook
             arguments:
-                file:
-                    help: Script to execute
+                path:
+                    help: Path of the script to execute
                 -a:
                     full: --args
-                    help: Arguments to pass to the script
+                    help: Ordered list of arguments to pass to the script
+                    nargs: "*"
+                --raise-on-error:
+                    help: Raise if the script returns a non-zero exit code
+                    action: store_true
+                -q:
+                    full: --no-trace
+                    help: Do not print each command that will be executed
+                    action: store_true
+                -d:
+                    full: --chdir
+                    help: The directory from where the script will be executed

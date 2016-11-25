@@ -1,0 +1,76 @@
+CAN_BIND=${CAN_BIND:-1}
+
+# Mark a file or a directory for backup
+# Note: currently, SRCPATH will be copied or binded to DESTPATH
+#
+# usage: ynh_backup srcdir destdir to_bind no_root
+# | arg: srcdir - directory to bind or copy
+# | arg: destdir - mountpoint or destination directory
+# | arg: to_bind - 1 to bind mounting the directory if possible
+# | arg: no_root - 1 to execute commands as current user
+ynh_backup() {
+    local SRCPATH=$1
+    local DESTPATH=$2
+    local TO_BIND=${3:-0}
+    local SUDO_CMD="sudo"
+    [[ "${4:-}" = "1" ]] && SUDO_CMD=
+
+    # validate arguments
+    [[ -e "${SRCPATH}" ]] || {
+        echo "Source path '${DESTPATH}' does not exist" >&2
+        return 1
+    }
+
+    # prepend the backup directory
+    [[ -n "${YNH_APP_BACKUP_DIR:-}" && "${DESTPATH:0:1}" != "/" ]] \
+        && DESTPATH="${YNH_APP_BACKUP_DIR}/${DESTPATH}"
+    [[ ! -e "${DESTPATH}" ]] || {
+        echo "Destination path '${DESTPATH}' already exist" >&2
+        return 1
+    }
+
+    # attempt to bind mounting the directory
+    if [[ "${CAN_BIND}" = "1" && "${TO_BIND}" = "1" ]]; then
+        eval $SUDO_CMD mkdir -p "${DESTPATH}"
+
+        if sudo mount --rbind "${SRCPATH}" "${DESTPATH}"; then
+            # try to remount destination directory as read-only
+            sudo mount -o remount,ro,bind "${SRCPATH}" "${DESTPATH}" \
+              || true
+            return 0
+        else
+            CAN_BIND=0
+            echo "Bind mounting seems to be disabled on your system."
+            echo "You have maybe to check your apparmor configuration."
+        fi
+
+        # delete mountpoint directory safely
+        mountpoint -q "${DESTPATH}" && sudo umount -R "${DESTPATH}"
+        eval $SUDO_CMD rm -rf "${DESTPATH}"
+    fi
+
+    # ... or just copy the directory
+    eval $SUDO_CMD mkdir -p $(dirname "${DESTPATH}")
+    eval $SUDO_CMD cp -a "${SRCPATH}" "${DESTPATH}"
+}
+
+# Deprecated helper since it's a dangerous one!
+ynh_bind_or_cp() {
+    local AS_ROOT=${3:-0}
+    local NO_ROOT=0
+    [[ "${AS_ROOT}" = "1" ]] || NO_ROOT=1
+    echo "This helper is deprecated, you should use ynh_backup instead" >&2
+    ynh_backup "$1" "$2" 1 "$NO_ROOT"
+}
+
+# Create a directory under /tmp
+#
+# usage: ynh_mkdir_tmp
+# | ret: the created directory path
+ynh_mkdir_tmp() {
+    TMPDIR="/tmp/$(ynh_string_random 6)"
+    while [ -d $TMPDIR ]; do
+        TMPDIR="/tmp/$(ynh_string_random 6)"
+    done
+    mkdir -p "$TMPDIR" && echo "$TMPDIR"
+}

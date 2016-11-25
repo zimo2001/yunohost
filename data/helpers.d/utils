@@ -1,0 +1,26 @@
+# Extract a key from a plain command output
+#
+# example: yunohost user info tata --output-as plain | ynh_get_plain_key mail
+#
+# usage: ynh_get_plain_key key [subkey [subsubkey ...]]
+# | ret: string - the key's value
+ynh_get_plain_key() {
+    prefix="#"
+    founded=0
+    key=$1
+    shift
+    while read line; do
+        if [[ "$founded" == "1" ]] ; then
+            [[ "$line" =~ ^${prefix}[^#] ]] && return
+            echo $line
+        elif [[ "$line" =~ ^${prefix}${key}$ ]]; then
+            if [[ -n "${1:-}" ]]; then
+                prefix+="#"
+                key=$1
+                shift
+            else
+                founded=1
+            fi
+        fi
+    done
+}

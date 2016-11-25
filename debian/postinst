@@ -1,56 +1,73 @@
 #!/bin/bash
 
-TMP=/usr/share/yunohost/yunohost-config/moulinette
+set -e
 
-if [ ! -d /etc/yunohost ];
-then
-	mkdir -p /etc/yunohost
-fi
+do_configure() {
+  rm -rf /var/cache/moulinette/*
 
-# Allow users to access /media directory
-if [ ! -d /etc/skel/media ];
-then
-        mkdir -p /media
-	ln -s /media /etc/skel/
-fi
+  if [ ! -f /etc/yunohost/installed ]; then
+      bash /usr/share/yunohost/hooks/conf_regen/01-yunohost init
+      bash /usr/share/yunohost/hooks/conf_regen/02-ssl init
+      bash /usr/share/yunohost/hooks/conf_regen/06-slapd init
+      bash /usr/share/yunohost/hooks/conf_regen/15-nginx init
+  else
+      echo "Regenerating configuration, this might take a while..."
+      yunohost service regen-conf --output-as none
 
-#Firewall
-grep -q "UPNP:" /etc/yunohost/firewall.yml > /dev/null 2>&1
-if [[ $? -eq 0 ]] || [ ! -f /etc/yunohost/firewall.yml ];
-then
-	cp $TMP/firewall.yml /etc/yunohost/
-fi
+      # restart yunohost-firewall if it's running
+      service yunohost-firewall status >/dev/null \
+        && restart_yunohost_firewall \
+        || echo "yunohost-firewall service is not running, you should " \
+            "consider to start it by doing 'service yunohost-firewall start'."
+  fi
 
-# App fetchlist
-if [ -f /etc/cron.d/yunohost-applist-yunohost ];
-then
-    sed -i "s/--no-ldap //g" /etc/cron.d/yunohost-applist-yunohost
-fi
+  # remove old PAM config and update it
+  [[ ! -f /usr/share/pam-configs/my_mkhomedir ]] \
+    || rm /usr/share/pam-configs/my_mkhomedir
+  pam-auth-update --package
+}
 
-# Service list
-if [ ! -f /etc/yunohost/services.yml ];
-then
-	cp $TMP/services.yml /etc/yunohost/
-fi
+restart_yunohost_firewall() {
+  echo "Restarting YunoHost firewall..."
 
-# Stop old API
-ps aux | grep "yunohost.tac" | grep -qv grep
-if [[ $? -eq 0 ]];
-then
-    killall twistd
-fi
+  deb-systemd-helper unmask yunohost-firewall.service >/dev/null || true
+  if deb-systemd-helper --quiet was-enabled yunohost-firewall.service; then
+      deb-systemd-helper enable yunohost-firewall.service >/dev/null || true
+  else
+      deb-systemd-helper update-state yunohost-firewall.service >/dev/null || true
+  fi
 
-rm -rf /var/cache/moulinette/*
-update-rc.d yunohost-api defaults
-service yunohost-api restart
+  if [ -x /etc/init.d/yunohost-firewall ]; then
+      update-rc.d yunohost-firewall enable >/dev/null
+      if [ -n "$2" ]; then
+          invoke-rc.d yunohost-firewall restart >/dev/null || exit $?
+      fi
+  fi
+}
 
-# Reload SSOwat conf if obsolete
-if [ -f /etc/yunohost/installed ];
-then
-    yunohost firewall upnp | grep -qi "true"
-    if [[ $? -eq 0 ]];
-    then
-        yunohost firewall upnp enable
-    fi
-    yunohost app ssowatconf
-fi
+# summary of how this script can be called:
+#        * <postinst> `configure' <most-recently-configured-version>
+#        * <old-postinst> `abort-upgrade' <new version>
+#        * <conflictor's-postinst> `abort-remove' `in-favour' <package>
+#          <new-version>
+#        * <deconfigured's-postinst> `abort-deconfigure' `in-favour'
+#          <failed-install-package> <version> `removing'
+#          <conflicting-package> <version>
+# for details, see http://www.debian.org/doc/debian-policy/ or
+# the debian-policy package
+
+case "$1" in
+    configure)
+        do_configure
+    ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0
